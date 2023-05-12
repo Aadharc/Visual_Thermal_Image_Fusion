@@ -72,7 +72,7 @@ class CrossAttention(nn.Module):
         attn1 = torch.bmm(query1, key1)
         attn1 = F.softmax(attn1, dim=2)
         attn1 = torch.clamp(attn1, 0, 1)
-        attended1 = torch.bmm(value1, attn1.permute(0, 2, 1)).view(batch_size, self.in_channels, h, w)
+        attended1 = torch.bmm(value2, attn1.permute(0, 2, 1)).view(batch_size, self.in_channels, h, w)
 
         # Combine the attended features from x1 and x2
         combined1 = self.combine_conv(torch.cat((x1, attended1), dim=1))
@@ -81,7 +81,7 @@ class CrossAttention(nn.Module):
         attn2 = torch.bmm(query2, key2)
         attn2 = F.softmax(attn2, dim=2)
         attn2 = torch.clamp(attn2, 0, 1)
-        attended2 = torch.bmm(value2, attn2.permute(0, 2, 1)).view(batch_size, self.in_channels, h, w)
+        attended2 = torch.bmm(value1, attn2.permute(0, 2, 1)).view(batch_size, self.in_channels, h, w)
 
         # Combine the attended features from x1 and x2
         combined2 = self.combine_conv(torch.cat((x1, attended2), dim=1))
