@@ -19,12 +19,11 @@ from ssim import SSIM
 from loss import calculate_ssim
 from Metrics import calculate_metrics
 import matplotlib.pyplot as plt 
+import argparse
 # torch.backends.cudnn.benchmark = False
 torch.backends.cudnn.benchmark = True
 
 
-import argparse
-import torch
 
 
 # Initialize wandb project
