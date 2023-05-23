@@ -257,7 +257,7 @@ def calculate_metrics(gen, val_loader, epoch, folder):
         gen.eval()
         with torch.no_grad():
             # Perform image fusion
-            y_fake, x_a, y_a = gen(img1, img2)
+            y_fake, x_a, y_a, l_a = gen(img1, img2)
             # Calculate the metrics for Vis
             psnr_vis = PSNR(img1, y_fake)
             ssim_vis = SSIM(img1, y_fake)

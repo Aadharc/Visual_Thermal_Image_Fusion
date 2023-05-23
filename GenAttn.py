@@ -39,13 +39,62 @@ class convblock(nn.Module):
     
 
 
+# class CrossAttention(nn.Module):
+#     def __init__(self, in_channels):
+#         super(CrossAttention, self).__init__()
+#         self.in_channels = in_channels
+
+#         # self.modality_id_ir = modality_id_ir
+#         # self.modality_id_vis = modality_id_vis
+
+#         # Convolutional layers for extracting query, key, and value features
+#         self.query_conv = nn.Conv2d(in_channels, in_channels // 8, kernel_size=1)
+#         self.key_conv = nn.Conv2d(in_channels, in_channels // 8, kernel_size=1)
+#         self.value_conv = nn.Conv2d(in_channels, in_channels, kernel_size=1)
+
+#         # Convolutional layer for combining the attended features
+#         self.combine_conv = nn.Conv2d(in_channels*2, in_channels, kernel_size=1)
+
+#     def forward(self, x1, x2):
+#         # Compute the query, key, and value features from x1 and x2
+#         batch_size, _, h, w = x1.size()
+#         query1 = self.query_conv(x1).view(batch_size, -1, h*w).permute(0, 2, 1)
+#         # print(f"query1 shape {query1.shape}")
+#         # query1 = query1 + self.modality_id_vis
+#         key1 = self.key_conv(x1).view(batch_size, -1, h*w)
+#         value1 = self.value_conv(x1).view(batch_size, -1, h*w)
+#         query2 = self.query_conv(x2).view(batch_size, -1, h*w).permute(0, 2, 1)
+#         # query2 = query2 + self.modality_id_ir
+#         key2 = self.key_conv(x2).view(batch_size, -1, h*w)
+#         value2 = self.value_conv(x2).view(batch_size, -1, h*w)
+
+#         # Compute the attention map and attended features
+#         attn1 = torch.bmm(query2, key1)
+#         attn1 = F.softmax(attn1, dim=2)
+#         attn1 = torch.clamp(attn1, 0, 1)
+#         attended1 = torch.bmm(value1, attn1.permute(0, 2, 1)).view(batch_size, self.in_channels, h, w)
+
+#         # Combine the attended features from x1 and x2
+#         combined1 = self.combine_conv(torch.cat((x1, attended1), dim=1))
+
+#         # Compute the attention map and attended features
+#         attn2 = torch.bmm(query1, key2)
+#         attn2 = F.softmax(attn2, dim=2)
+#         attn2 = torch.clamp(attn2, 0, 1)
+#         attended2 = torch.bmm(value2, attn2.permute(0, 2, 1)).view(batch_size, self.in_channels, h, w)
+
+#         # Combine the attended features from x1 and x2
+#         combined2 = self.combine_conv(torch.cat((x2, attended2), dim=1))
+
+#         # return torch.cat((torch.abs(combined1).sum(dim=1).unsqueeze(1), torch.abs(combined2).sum(dim = 1).unsqueeze(1)), dim = 1)
+#         return (combined1.pow(2).mean(1).unsqueeze(1), combined2.pow(2).mean(1).unsqueeze(1))
+
+
+
 class CrossAttention(nn.Module):
     def __init__(self, in_channels):
         super(CrossAttention, self).__init__()
         self.in_channels = in_channels
-
-        # self.modality_id_ir = modality_id_ir
-        # self.modality_id_vis = modality_id_vis
 
         # Convolutional layers for extracting query, key, and value features
         self.query_conv = nn.Conv2d(in_channels, in_channels // 8, kernel_size=1)
@@ -53,41 +102,51 @@ class CrossAttention(nn.Module):
         self.value_conv = nn.Conv2d(in_channels, in_channels, kernel_size=1)
 
         # Convolutional layer for combining the attended features
-        self.combine_conv = nn.Conv2d(in_channels*2, in_channels, kernel_size=1)
+        self.combine_conv = nn.Conv2d(in_channels * 2, in_channels, kernel_size=1)
 
     def forward(self, x1, x2):
         # Compute the query, key, and value features from x1 and x2
         batch_size, _, h, w = x1.size()
-        query1 = self.query_conv(x1).view(batch_size, -1, h*w).permute(0, 2, 1)
-        # print(f"query1 shape {query1.shape}")
-        # query1 = query1 + self.modality_id_vis
-        key1 = self.key_conv(x1).view(batch_size, -1, h*w)
-        value1 = self.value_conv(x1).view(batch_size, -1, h*w)
-        query2 = self.query_conv(x2).view(batch_size, -1, h*w).permute(0, 2, 1)
-        # query2 = query2 + self.modality_id_ir
-        key2 = self.key_conv(x2).view(batch_size, -1, h*w)
-        value2 = self.value_conv(x2).view(batch_size, -1, h*w)
+        query1 = self.query_conv(x1).view(batch_size, -1, h * w).permute(0, 2, 1)
+        key1 = self.key_conv(x1).view(batch_size, -1, h * w)
+        value1 = self.value_conv(x1).view(batch_size, -1, h * w)
+        query2 = self.query_conv(x2).view(batch_size, -1, h * w).permute(0, 2, 1)
+        key2 = self.key_conv(x2).view(batch_size, -1, h * w)
+        value2 = self.value_conv(x2).view(batch_size, -1, h * w)
 
         # Compute the attention map and attended features
-        attn1 = torch.bmm(query1, key1)
+        attn1 = torch.bmm(query2, key1)
         attn1 = F.softmax(attn1, dim=2)
-        attn1 = torch.clamp(attn1, 0, 1)
-        attended1 = torch.bmm(value2, attn1.permute(0, 2, 1)).view(batch_size, self.in_channels, h, w)
+        # attn1 = torch.clamp(attn1, 0, 1)
+        attended1 = torch.bmm(value1, attn1.permute(0, 2, 1)).view(batch_size, self.in_channels, h, w)
 
         # Combine the attended features from x1 and x2
         combined1 = self.combine_conv(torch.cat((x1, attended1), dim=1))
 
         # Compute the attention map and attended features
-        attn2 = torch.bmm(query2, key2)
+        attn2 = torch.bmm(query1, key2)
         attn2 = F.softmax(attn2, dim=2)
         attn2 = torch.clamp(attn2, 0, 1)
-        attended2 = torch.bmm(value1, attn2.permute(0, 2, 1)).view(batch_size, self.in_channels, h, w)
+        attended2 = torch.bmm(value2, attn2.permute(0, 2, 1)).view(batch_size, self.in_channels, h, w)
 
         # Combine the attended features from x1 and x2
-        combined2 = self.combine_conv(torch.cat((x1, attended2), dim=1))
+        combined2 = self.combine_conv(torch.cat((x2, attended2), dim=1))
 
-        # return torch.cat((torch.abs(combined1).sum(dim=1).unsqueeze(1), torch.abs(combined2).sum(dim = 1).unsqueeze(1)), dim = 1)
-        return (combined1.pow(2).mean(1).unsqueeze(1), combined2.pow(2).mean(1).unsqueeze(1))
+        # Compute uniqueness loss using contrastive loss
+        loss = self.contrastive_loss(combined1, combined2)
+
+        # Return the fused features and uniqueness loss
+        # return combined1, combined2, loss
+        return (combined1.pow(2).mean(1).unsqueeze(1), combined2.pow(2).mean(1).unsqueeze(1), loss)
+
+    def contrastive_loss(self, x1, x2, margin=1.0):
+        # Compute the L2 distance between features
+        distance = F.pairwise_distance(x1, x2)
+
+        # Compute the contrastive loss
+        loss = torch.mean((1 - distance) ** 2)
+        return loss
+
 
 class convup(nn.Module):
     def __init__(self, in_chan = 3, features = 32):
@@ -112,10 +171,10 @@ class convup(nn.Module):
 class AttentionDownSampled(nn.Module):
     def __init__(self, in_chan = 3, features = 32):
         super().__init__()
-        self.down1 = block(in_chan, features, down = True, act = "prelu", use_dropout= False)
-        self.down2 = block(features, features, down = True, act = "prelu", use_dropout= False)
-        self.down3 = block(features, features, down = True, act = "prelu", use_dropout= False)
-        self.down4 = block(features, features, down = True, act = "prelu", use_dropout= False)
+        self.down1 = block(in_chan, features // 4, down = True, act = "prelu", use_dropout= False)
+        self.down2 = block(features // 4, features // 2, down = True, act = "prelu", use_dropout= False)
+        self.down3 = block(features // 2, features, down = True, act = "prelu", use_dropout= False)
+        # self.down4 = block(features, features, down = True, act = "prelu", use_dropout= False)
         # self.attn = CrossAttention(32,  modality_id_vis=torch.randn(8, 2048, 4).to(config.DEVICE),  modality_id_ir=torch.randn(8, 2048, 4).to(config.DEVICE))
         self.attn = CrossAttention(32)
     def forward(self, x, y):
@@ -124,14 +183,14 @@ class AttentionDownSampled(nn.Module):
         dx1 = self.down1(x)
         dx2 = self.down2(dx1)
         dx3 = self.down3(dx2)
-        dx4 = self.down4(dx3)
+        # dx4 = self.down4(dx3)
 
         dy1 = self.down1(y)
         dy2 = self.down2(dy1)
         dy3 = self.down3(dy2)
-        dy4 = self.down4(dy3)
+        # dy4 = self.down4(dy3)
 
-        attn1, attn2 = self.attn(dx4, dy4)
+        attn1, attn2, contrastive_loss = self.attn(dx3, dy3)
 
         attn1 = torch.nn.functional.interpolate(attn1, (h,w), mode = 'bilinear', align_corners = False)
         attn2 = torch.nn.functional.interpolate(attn2, (h,w), mode = 'bilinear', align_corners = False)
@@ -139,7 +198,7 @@ class AttentionDownSampled(nn.Module):
         # attn1 = torch.clamp(attn1, 0, 1)
         # attn2 = torch.clamp(attn2, 0, 1)
 
-        return x * attn1, y * attn2
+        return x * attn1, y * attn2, contrastive_loss
         # return attn1, attn2
 
 
@@ -165,7 +224,7 @@ class Generator_attn(nn.Module):
 
     def forward(self, x, y):
         # w,h = x.shape[2], x.shape[3]
-        x_a, y_a = self.attn(x,y)
+        x_a, y_a, l_a = self.attn(x,y)
         # print(f"x_a shape {x_a.shape}")
         dx1 = self.down1(x_a)
         dx2 = self.down2(dx1)
@@ -200,7 +259,7 @@ class Generator_attn(nn.Module):
         # u2 = self.up2(u1)
         # u3 = self.up3(u2)
         u4 = self.up4(u3) 
-        return u4, x_a, y_a
+        return u4, x_a, y_a, l_a
 
 
 
@@ -276,7 +335,7 @@ class Gen(nn.Module):
         )
 
     def forward(self, x, y):
-        x_a, y_a = self.attn(x, y)
+        x_a, y_a, l_a = self.attn(x, y)
 
         d = torch.cat([x_a,y_a], dim=1)
         # print("d shape", d.shape)
@@ -304,7 +363,7 @@ class Gen(nn.Module):
         up5 = self.up5(torch.cat([up4, d4], 1))
         up6 = self.up6(torch.cat([up5, d3], 1))
         up7 = self.up7(torch.cat([up6, d2], 1))
-        return self.final_up(torch.cat([up7, d1], 1)), x_a, y_a
+        return self.final_up(torch.cat([up7, d1], 1)), x_a, y_a, l_a
 
 
 

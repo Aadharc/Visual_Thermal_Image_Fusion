@@ -17,7 +17,7 @@ def save_some_examples(gen, val_loader, epoch, folder, device):
         x, y = x.to(device), y.to(device)
         gen.eval()
         with torch.no_grad():
-            y_fake, x_a, y_a = gen(x, y)
+            y_fake, x_a, y_a, l_a= gen(x, y)
             save_image(y_fake, folder + f"/Fused_{epoch}.png")
             save_image(x, folder + f"/VIS_{epoch}.png")
             save_image(y, folder + f"/IR_{epoch}.png")

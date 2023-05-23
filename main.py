@@ -3,6 +3,8 @@ from utils import save_checkpoint, load_checkpoint, save_some_examples, save_gen
 import torch.nn as nn
 import torch.optim as optim
 import numpy as np
+import wandb
+
 # import config
 # from dataset import MapDataset
 from Dataset import CustomDataSet
@@ -14,6 +16,7 @@ from tqdm import tqdm
 import torchvision.transforms as transforms
 from torchvision.utils import save_image
 from ssim import SSIM
+from loss import calculate_ssim
 from Metrics import calculate_metrics
 import matplotlib.pyplot as plt 
 # torch.backends.cudnn.benchmark = False
@@ -23,6 +26,9 @@ torch.backends.cudnn.benchmark = True
 import argparse
 import torch
 
+
+# Initialize wandb project
+wandb.init(project = "Fusion")
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu",
@@ -102,6 +108,17 @@ checkpoint_disc_ir = args.checkpoint_disc_ir
 checkpoint_disc_vis = args.checkpoint_disc_vis
 checkpoint_gen = args.checkpoint_gen
 
+# saving config to wandb
+wandb.config.learning_rate = learning_rate
+wandb.config.batch_size = batch_size
+wandb.config.num_workers = num_workers
+wandb.config.image_size = image_size
+channels_img = channels_img
+wandb.config.l1_lambda = l1_lambda
+wandb.config.alpha = alpha
+wandb.config.beta = beta
+wandb.config.num_epochs = num_epochs
+
 
 def train_fn(disc_ir, disc_vis, gen, train_loader, val_loader, opt_disc_ir, opt_disc_vis, opt_gen, l1_loss, bce, ssim, KL, g_scaler, d_scaler_ir,d_scaler_vis):
 
@@ -128,7 +145,7 @@ def train_fn(disc_ir, disc_vis, gen, train_loader, val_loader, opt_disc_ir, opt_
 
         # Train Discriminator
         with torch.cuda.amp.autocast():
-            y_fake, x_a, y_a = gen(x, y)
+            y_fake, x_a, y_a, l_a = gen(x, y)
             to_PIL = transforms.ToPILImage()
             D_real_ir = disc_ir(y, y)
             D_real_loss_ir = bce(D_real_ir, torch.ones_like(D_real_ir))
@@ -171,8 +188,8 @@ def train_fn(disc_ir, disc_vis, gen, train_loader, val_loader, opt_disc_ir, opt_
             G_fake_loss_vis = bce(D_fake_vis, torch.ones_like(D_fake_vis))
             # L1 = (l1_loss(y_fake, y) + l1_loss(y_fake, x) - l1_loss(x_a.to(config.DEVICE), y_a.to(config.DEVICE))) * config.L1_LAMBDA
             L1 = (l1_loss(y_fake, y) + l1_loss(y_fake, x)) * l1_lambda
-            KL1 = -KL(x_a.clone(), y_a.clone())
-            G_loss = G_fake_loss_ir + G_fake_loss_vis + KL1 + L1 + beta * (KL(y_fake.clone(),y.clone()) + KL(y_fake.clone(),x.clone()))
+            # KL1 = KL(x_a.clone(), y_a.clone())
+            G_loss = G_fake_loss_ir + G_fake_loss_vis + L1 + beta * (KL(y_fake.clone(),y.clone()) + KL(y_fake.clone(),x.clone())) + l_a
             G_loss_train += G_loss.item()
         opt_gen.zero_grad()
         g_scaler.scale(G_loss).backward()
@@ -211,7 +228,7 @@ def train_fn(disc_ir, disc_vis, gen, train_loader, val_loader, opt_disc_ir, opt_
 
             # Discriminator
             with torch.cuda.amp.autocast():
-                y_fake, x_a, y_a = gen(x, y)
+                y_fake, x_a, y_a, l_a = gen(x, y)
                 to_PIL = transforms.ToPILImage()
                 D_real_ir_val = disc_ir(y, y)
                 D_real_loss_ir = bce(D_real_ir, torch.ones_like(D_real_ir))
@@ -235,17 +252,14 @@ def train_fn(disc_ir, disc_vis, gen, train_loader, val_loader, opt_disc_ir, opt_
             with torch.cuda.amp.autocast():
                 D_fake_ir = disc_ir(y, y_fake)
                 D_fake_vis = disc_vis(x, y_fake)
-                # print(torch.sum(a))
-                # print(torch.sum(b))
-                # print(max(torch.sum(b),torch.sum(a)))
-                # detection_loss = abs(num_det - max(torch.sum(a), torch.sum(b)))
+
                 G_fake_loss_ir = bce(D_fake_ir, torch.ones_like(D_fake_ir))
                 G_fake_loss_vis = bce(D_fake_vis, torch.ones_like(D_fake_vis))
                 # L1 = (l1_loss(y_fake, y) + l1_loss(y_fake, x) - l1_loss(x_a.to(config.DEVICE), y_a.to(config.DEVICE))) * config.L1_LAMBDA
                 L1 = (l1_loss(y_fake, y) + l1_loss(y_fake, x)) * l1_lambda
-                KL1 = -KL(x_a.clone(), y_a.clone())
-                G_loss_val = G_fake_loss_ir + G_fake_loss_vis + KL1 + L1 + beta * (KL(y_fake.clone(),y.clone()) + KL(y_fake.clone(),x.clone()))
-
+                # KL1 = KL(x_a.clone(), y_a.clone())
+                G_loss_val = G_fake_loss_ir + G_fake_loss_vis + L1 + beta * (KL(y_fake.clone(),y.clone()) + KL(y_fake.clone(),x.clone())) + l_a
+                
             if idx % 10 == 0:
                 val_loop.set_postfix(
                     D_real_ir_val=torch.sigmoid(D_real_ir).mean().item(),
@@ -254,6 +268,9 @@ def train_fn(disc_ir, disc_vis, gen, train_loader, val_loader, opt_disc_ir, opt_
                     D_fake_vis_val=torch.sigmoid(D_fake_vis).mean().item(),
                     G_Loss_val = torch.tensor(G_loss).clone().detach().mean().item(),
                 )
+            # Logging loss values for training
+            # wandb.log({"Generator Loss Val": G_loss_val.item(), "Discriminator IR Loss Val": D_loss_ir.item(), "Discriminator VIS Loss Val": D_loss_vis.item()})
+            
 
     return G_loss_train, D_loss_vis_train, D_loss_ir_train
 
@@ -261,9 +278,14 @@ def main():
     # masked_feat = MaskedFeatures(in_chan = 3, features = 8)
     disc_ir = Discriminator(in_channels=3).to(DEVICE)
     disc_vis = Discriminator(in_channels=3).to(DEVICE)
+    # Log model and gradients
+    wandb.watch(disc_ir)
+    wandb.watch(disc_vis)
     # gen = Generator(in_channels=64, features=64).to(config.DEVICE)
-    gen = Generator_attn(3,32).to(DEVICE)
-    # gen = Gen().to(DEVICE)
+    # gen = Generator_attn(3,32).to(DEVICE)
+    # Log model and gradients
+    gen = Gen().to(DEVICE)
+    wandb.watch(gen)
     opt_disc_ir = optim.Adam(disc_ir.parameters(), lr=learning_rate, betas=(0.5, 0.999),)
     opt_disc_vis = optim.Adam(disc_vis.parameters(), lr=learning_rate, betas=(0.5, 0.999),)
     opt_gen = optim.Adam(gen.parameters(), lr=learning_rate, betas=(0.5, 0.999))
@@ -344,14 +366,16 @@ def main():
         )
         
         tqdm.write(f"Epoch {epoch} - Gen Loss: {p:.4f} - D1 Loss: {q:.4f} - D2 Loss: {r:.4f} ")
+        # Logging loss values for training
+        wandb.log({"Generator Loss": p, "Discriminator IR Loss": r, "Discriminator VIS Loss": q})
 
         if save_model and epoch % 2 == 0:
-            save_checkpoint(gen, opt_gen, filename=checkpoint_gen)
-            save_checkpoint(disc_ir, opt_disc_ir, filename=checkpoint_disc_ir)
-            save_checkpoint(disc_vis, opt_disc_vis, filename=checkpoint_disc_vis)
+            # save_checkpoint(gen, opt_gen, filename=checkpoint_gen)
+            # save_checkpoint(disc_ir, opt_disc_ir, filename=checkpoint_disc_ir)
+            # save_checkpoint(disc_vis, opt_disc_vis, filename=checkpoint_disc_vis)
             print('plotting metrics')
             # m1 = calculate_metrics_with_patch(gen, test_loader1, epoch, folder = "dump7", device = DEVICE)
-            df, stats = calculate_metrics(gen, test_loader1, epoch, folder = "dump2")
+            df, stats = calculate_metrics(gen, test_loader1, epoch, folder = "dump11")
             min_psnr_vis.append(stats.loc['min', 'PSNR_VIS'])
             max_psnr_vis.append(stats.loc['max', 'PSNR_VIS'])
             mean_psnr_vis.append(stats.loc['mean', 'PSNR_VIS'])
@@ -374,7 +398,7 @@ def main():
             mean_nmi_ir.append(stats.loc['mean', 'NMI_IR'])
 
             print(f"saving examples at epoch {epoch}")
-            save_some_examples(gen, test_loader, epoch, folder="dump2", device = DEVICE)  #label3 512x1024 with no clamp on masks and yolov5         
+            save_some_examples(gen, test_loader, epoch, folder="dump11", device = DEVICE)  #label3 512x1024 with no clamp on masks and yolov5         
 
 
     # converting all data lists to np arrays to calculate mean for box plots
@@ -397,7 +421,7 @@ def main():
     min_nmi_ir = np.array( min_nmi_ir, dtype = float)
     max_nmi_ir = np.array( max_nmi_ir, dtype = float)
     mean_nmi_ir = np.array(mean_nmi_ir , dtype = float)
-    print(type(mean_psnr_vis))
+    # print(type(mean_psnr_vis))
     box_data = [min_psnr_vis, max_psnr_vis, mean_psnr_vis, min_ssim_vis, max_ssim_vis, mean_ssim_vis, min_nmi_vis, max_nmi_vis, mean_nmi_vis, min_psnr_ir, max_psnr_ir, mean_psnr_ir, min_ssim_ir, max_ssim_ir, mean_ssim_ir, min_nmi_ir, max_nmi_ir, mean_nmi_ir]
     labels = ['PSNR_VIS', 'max PSNR_VIS', 'mean PSNR_VIS', 'SSIM_VIS', 'max SSIM_VIS', 'mean SSIM_VIS', 'NMI_VIS', 'max NMI_VIS', 'mean NMI_VIS', 'PSNR_IR', 'max PSNR_IR', 'mean PSNR_IR', 'SSIM_IR', 'max SSIM_IR', 'mean SSIM_IR', 'NMI_IR', 'max NMI_IR', 'mean NMI_IR']
     fig, axs = plt.subplots(2, 6, figsize=(20, 10))
@@ -436,12 +460,12 @@ def main():
             axs[0, i].set_title('NMI_VIS')
             axs[0, i].set_xlabel('Epochs')
             axs[0, i].set_ylabel('NMI_VIS')
-            axs[0, i].set_ylim(0.9, 1.2)
+            axs[0, i].set_ylim(0.9, 1.8)
             # axs[0, i].set_ylim([min(min_nmi_vis + max_nmi_vis + mean_nmi_vis), max(min_nmi_vis + max_nmi_vis + mean_nmi_vis)])
             axs[0, i].legend()
         elif i == 3:
-            axs[0, i].plot(max_psnr_ir, label='max PSNR_IR')
             axs[0, i].plot(min_psnr_ir, label='min PSNR_IR')
+            axs[0, i].plot(max_psnr_ir, label='max PSNR_IR')
             axs[0, i].plot(mean_psnr_ir, label='mean PSNR_IR')
             axs[0, i].set_title('PSNR_IR')
             axs[0, i].set_xlabel('Epochs')
@@ -466,7 +490,7 @@ def main():
             axs[0, i].set_title('NMI_IR')
             axs[0, i].set_xlabel('Epochs')
             axs[0, i].set_ylabel('NMI_IR')
-            axs[0, i].set_ylim(0.9, 1.2)
+            axs[0, i].set_ylim(0.9, 1.8)
             # axs[0, i].set_ylim([min(min_nmi_ir + max_nmi_ir + mean_nmi_ir), max(min_nmi_ir + max_nmi_ir + mean_nmi_ir)])
             axs[0, i].legend()
 
@@ -482,13 +506,13 @@ def main():
         elif i ==1 or i == 4:
             axs[1,i].set_ylim(0,1)
         elif i == 2 or i == 5:
-            axs[1,i].set_ylim(0.9,1.2)
+            axs[1,i].set_ylim(0.9,1.8)
 
 
 
     # adjust the layout of the subplots and save the figure
     fig.tight_layout()
-    plt.savefig('/dump3' + 'min_max_metrics_visir_subplot_box.png')
+    plt.savefig('dump11_' + 'min_max_metrics_visir_subplot_box.png')
     plt.close()
 
 
