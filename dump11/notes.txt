@@ -1,0 +1,1 @@
+visual attention (attn2) clipped in cross attention
