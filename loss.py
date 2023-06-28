@@ -73,6 +73,64 @@ def calculate_ssim(image1, image2, patch_size=64, metric = 'ssim'):
 
     return metric_value
 
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import torchvision.transforms as transforms
+
+class ContrastiveLoss(nn.Module):
+    def __init__(self, temperature):
+        super(ContrastiveLoss, self).__init__()
+        self.temperature = temperature
+
+    def forward(self, z1, z2):
+        # Normalize the embeddings
+        z1 = F.normalize(z1, dim=1)
+        z2 = F.normalize(z2, dim=1)
+
+        # Concatenate and normalize the embeddings
+        embeddings = torch.cat([z1, z2], dim=0)
+        embeddings = F.normalize(embeddings, dim=1)
+        batch_size = embeddings.shape[0]
+
+        # Reshape the tensors for cosine similarity calculation
+        embeddings = embeddings.view(batch_size, -1)  # (batch_size, channels * height * width)
+
+        # Compute cosine similarity matrix
+        similarity_matrix = torch.matmul(embeddings, embeddings.t())
+
+        # Exclude the main diagonal from similarity calculations
+        mask = torch.eye(similarity_matrix.size(0), dtype=torch.bool)
+        similarity_matrix = similarity_matrix[~mask].view(embeddings.size(0), -1)
+
+        # Compute contrastive loss
+        contrastive_loss = -torch.log_softmax(similarity_matrix / self.temperature, dim=1)
+        contrastive_loss = contrastive_loss.diag().mean()
+
+        return contrastive_loss
+
+## Example usage
+# embedding_dim = 128
+# temperature = 0.5
+# loss_fn = ContrastiveLoss(temperature)
+
+# # Generate dummy inputs
+# batch_size = 16
+# transform = transforms.Compose([
+#     transforms.ToTensor(),
+#     # Add appropriate data augmentations here
+# ])
+# x1 = torch.randn(batch_size, 3, 224, 224)  # Visual image
+# x2 = torch.randn(batch_size, 3, 224, 224)  # Another visual image
+
+# # Preprocess and encode the images
+# z1 = encoder(x1)  # Encode visual image
+# z2 = encoder(x2)  # Encode another visual image
+
+# # Compute the contrastive loss
+# contrastive_loss = loss_fn(z1, z2)
+
+
 def test():
     x = torch.randn((8, 3, 512, 640))
     y = torch.randn((8, 3, 512, 640))

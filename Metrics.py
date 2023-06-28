@@ -249,8 +249,8 @@ def calculate_metrics(gen, val_loader, epoch, folder):
     for batch in val_loader:
         img1 = batch['image_vis']
         img2 = batch['image_ir']
-        a = batch['target_vis']
-        b = batch['target_ir']
+        # a = batch['target_vis']
+        # b = batch['target_ir']
         # masked_feat = mask_feat(x, y)
         # mask_x, mask_y = masked_feat[2].to(config.DEVICE), masked_feat[3].to(config.DEVICE)
         img1, img2 = img1.to(DEVICE), img2.to(DEVICE)

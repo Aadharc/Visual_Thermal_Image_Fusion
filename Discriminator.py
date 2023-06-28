@@ -2,8 +2,6 @@ import torch
 import torch.nn as nn
 
 
-
-
 class CNNBlock(nn.Module):
     def __init__(self, in_channels, out_channels, stride):
         super(CNNBlock, self).__init__()
@@ -45,6 +43,17 @@ class Discriminator(nn.Module):
             ),
             nn.LeakyReLU(0.2),
         )
+        self.initial2 = nn.Sequential(
+            nn.Conv2d(
+                2,
+                features[0],
+                kernel_size=4,
+                stride=2,
+                padding=1,
+                padding_mode="reflect",
+            ),
+            nn.LeakyReLU(0.2),
+        )
 
         layers = []
         in_channels = features[0]
@@ -63,9 +72,13 @@ class Discriminator(nn.Module):
         self.model = nn.Sequential(*layers)
 
     def forward(self, x, y):
-        if y.shape[1] == 1:
+        if (y.shape[1] == 1 and x.shape[1] == 3) or (x.shape[1] == 1 and y.shape[1] == 3):
             x = torch.cat([x, y], dim=1)
             x = self.initial1(x)
+        elif y.shape[1] == 1 and x.shape[1] == 1:
+            x = torch.cat([x,y], dim = 1)
+            x = self.initial2(x)
+
         else:
             x = torch.cat([x, y], dim=1)
             x = self.initial(x)

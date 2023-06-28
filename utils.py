@@ -11,13 +11,15 @@ def save_some_examples(gen, val_loader, epoch, folder, device):
     for batch in val_loader:
         x = batch['image_vis']
         y = batch['image_ir']
-        a = batch['target_vis']
-        b = batch['target_ir']
+        # a = batch['target_vis']
+        # b = batch['target_ir']
         # x, y = x.to(config.DEVICE), y.to(config.DEVICE)
         x, y = x.to(device), y.to(device)
         gen.eval()
         with torch.no_grad():
             y_fake, x_a, y_a, l_a= gen(x, y)
+            x_a = x * x_a
+            y_a = y * y_a
             save_image(y_fake, folder + f"/Fused_{epoch}.png")
             save_image(x, folder + f"/VIS_{epoch}.png")
             save_image(y, folder + f"/IR_{epoch}.png")
@@ -40,7 +42,6 @@ def load_checkpoint(checkpoint_file, model, optimizer, lr, device):
     checkpoint = torch.load(checkpoint_file, map_location=device)
     model.load_state_dict(checkpoint["state_dict"])
     optimizer.load_state_dict(checkpoint["optimizer"])
-
     # If we don't do this then it will just have learning rate of old checkpoint
     # and it will lead to many hours of debugging \:
     for param_group in optimizer.param_groups:

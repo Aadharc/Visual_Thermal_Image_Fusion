@@ -1,16 +1,20 @@
 import torch
 from utils import save_checkpoint, load_checkpoint, save_some_examples, save_generated_image
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.optim as optim
 import numpy as np
 import wandb
 
 # import config
 # from dataset import MapDataset
-from Dataset import CustomDataSet
+from Dataset2 import CustomDataSet
 from GenAttn import Generator_attn, Gen
 
+from torch.optim.lr_scheduler import CosineAnnealingLR
+
 from Discriminator import Discriminator
+# from Discriminator_attn import Discriminator_attn
 from torch.utils.data import DataLoader, Subset, RandomSampler
 from tqdm import tqdm
 import torchvision.transforms as transforms
@@ -54,8 +58,8 @@ parser.add_argument("--batch_size", type=int, default=8,
                     help="Batch size for the training (default: 8)")
 parser.add_argument("--num_workers", type=int, default=2,
                     help="Number of workers for the data loader (default: 2)")
-parser.add_argument("--image_size", type=int, default=512,
-                    help="Image size (default: 512)")
+parser.add_argument("--image_size", type=int, default=(512, 1024),
+                    help="Image size (default: (512, 1024)")
 parser.add_argument("--channels_img", type=int, default=3,
                     help="Number of channels in the input images (default: 3)")
 parser.add_argument("--l1_lambda", type=float, default=100,
@@ -74,8 +78,8 @@ parser.add_argument("--checkpoint_disc_ir", type=str, default="disc_ir_maskbwsel
                     help="Checkpoint file for the discriminator for infrared modality (default: disc_ir_maskbwself.pth.tar)")
 parser.add_argument("--checkpoint_disc_vis", type=str, default="disc_vis_maskbwself.pth.tar",
                     help="Checkpoint file for the discriminator for visual modality (default: disc_vis_maskbwself.pth.tar)")
-parser.add_argument("--checkpoint_gen", type=str, default="gen_10_maskbself.pth.tar",
-                    help="Checkpoint file for the generator (default: gen_10_maskbself.pth.tar)")
+parser.add_argument("--checkpoint_gen", type=str, default="gen_Danny.pth.tar",
+                    help="Checkpoint file for the generator (default: gen_Danny.pth.tar)")
 
 args = parser.parse_args()
 
@@ -135,8 +139,8 @@ def train_fn(disc_ir, disc_vis, gen, train_loader, val_loader, opt_disc_ir, opt_
         # Training
         x = batch['image_vis']
         y = batch['image_ir']
-        a = batch['target_vis']
-        b = batch['target_ir']
+        # a = batch['target_vis']
+        # b = batch['target_ir']
 
         x = x.to(DEVICE)
         y = y.to(DEVICE)
@@ -144,7 +148,9 @@ def train_fn(disc_ir, disc_vis, gen, train_loader, val_loader, opt_disc_ir, opt_
 
         # Train Discriminator
         with torch.cuda.amp.autocast():
-            y_fake, x_a, y_a, l_a = gen(x, y)
+            y_fake, attn1, attn2, l_a = gen(x, y)
+            x_a = x * attn1
+            y_a = y * attn2
             to_PIL = transforms.ToPILImage()
             D_real_ir = disc_ir(y, y)
             D_real_loss_ir = bce(D_real_ir, torch.ones_like(D_real_ir))
@@ -162,9 +168,9 @@ def train_fn(disc_ir, disc_vis, gen, train_loader, val_loader, opt_disc_ir, opt_
             
             # weightage preference for discriminator based on which modality has more number of humans
             # if torch.sum(a) < torch.sum(b):
-            #     D_loss_ir = 5 * D_loss_ir
+            #     D_loss_ir = 50 * D_loss_ir
             # if torch.sum(a) > torch.sum(b):
-            #     D_loss_vis = 5 * D_loss_vis  
+            #     D_loss_vis = 50 * D_loss_vis  
 
         disc_ir.zero_grad()
         disc_vis.zero_grad()
@@ -187,8 +193,13 @@ def train_fn(disc_ir, disc_vis, gen, train_loader, val_loader, opt_disc_ir, opt_
             G_fake_loss_vis = bce(D_fake_vis, torch.ones_like(D_fake_vis))
             # L1 = (l1_loss(y_fake, y) + l1_loss(y_fake, x) - l1_loss(x_a.to(config.DEVICE), y_a.to(config.DEVICE))) * config.L1_LAMBDA
             L1 = (l1_loss(y_fake, y) + l1_loss(y_fake, x)) * l1_lambda
+            # triplet_loss = F.triplet_margin_loss(y_fake, y_a, x_a)
+            cross = nn.CrossEntropyLoss()
+            # attn_loss = (cross(y_fake * attn2, y * attn2) + cross(y_fake * attn1, x * attn1)) * 10
+            attn_contrastive_loss = l_a
             # KL1 = KL(x_a.clone(), y_a.clone())
-            G_loss = G_fake_loss_ir + G_fake_loss_vis + L1 + beta * (KL(y_fake.clone(),y.clone()) + KL(y_fake.clone(),x.clone())) + l_a
+            # G_loss = G_fake_loss_ir + G_fake_loss_vis + L1 + attn_contrastive_loss
+            G_loss = G_fake_loss_ir + G_fake_loss_vis + L1 + beta * (KL(y_fake.clone(),y.clone()) + KL(y_fake.clone(),x.clone())) + attn_contrastive_loss
             G_loss_train += G_loss.item()
         opt_gen.zero_grad()
         g_scaler.scale(G_loss).backward()
@@ -218,8 +229,8 @@ def train_fn(disc_ir, disc_vis, gen, train_loader, val_loader, opt_disc_ir, opt_
             # Validation
             x = batch['image_vis']
             y = batch['image_ir']
-            a = batch['target_vis']
-            b = batch['target_ir']
+            # a = batch['target_vis']
+            # b = batch['target_ir']
 
             x = x.to(DEVICE)
             y = y.to(DEVICE)
@@ -227,7 +238,9 @@ def train_fn(disc_ir, disc_vis, gen, train_loader, val_loader, opt_disc_ir, opt_
 
             # Discriminator
             with torch.cuda.amp.autocast():
-                y_fake, x_a, y_a, l_a = gen(x, y)
+                y_fake, attn1, attn2, l_a = gen(x, y)
+                x_a = x * attn1
+                y_a = y * attn2
                 to_PIL = transforms.ToPILImage()
                 D_real_ir_val = disc_ir(y, y)
                 D_real_loss_ir = bce(D_real_ir, torch.ones_like(D_real_ir))
@@ -256,8 +269,13 @@ def train_fn(disc_ir, disc_vis, gen, train_loader, val_loader, opt_disc_ir, opt_
                 G_fake_loss_vis = bce(D_fake_vis, torch.ones_like(D_fake_vis))
                 # L1 = (l1_loss(y_fake, y) + l1_loss(y_fake, x) - l1_loss(x_a.to(config.DEVICE), y_a.to(config.DEVICE))) * config.L1_LAMBDA
                 L1 = (l1_loss(y_fake, y) + l1_loss(y_fake, x)) * l1_lambda
+                cross = nn.CrossEntropyLoss()
+                # attn_loss = (cross(y_fake * attn2, y * attn2) + cross(y_fake * attn1, x * attn1)) * 10
+                attn_contrastive_loss = l_a
+                # triplet_loss = F.triplet_margin_loss(y_fake, y_a, x_a)
                 # KL1 = KL(x_a.clone(), y_a.clone())
-                G_loss_val = G_fake_loss_ir + G_fake_loss_vis + L1 + beta * (KL(y_fake.clone(),y.clone()) + KL(y_fake.clone(),x.clone())) + l_a
+                # G_loss = G_fake_loss_ir + G_fake_loss_vis + L1 + attn_contrastive_loss
+                G_loss = G_fake_loss_ir + G_fake_loss_vis + L1 + beta * (KL(y_fake.clone(),y.clone()) + KL(y_fake.clone(),x.clone())) + attn_contrastive_loss
                 
             if idx % 10 == 0:
                 val_loop.set_postfix(
@@ -285,10 +303,13 @@ def main():
     # Log model and gradients
     gen = Gen().to(DEVICE)
     wandb.watch(gen)
-    opt_disc_ir = optim.Adam(disc_ir.parameters(), lr=learning_rate, betas=(0.5, 0.999),)
-    opt_disc_vis = optim.Adam(disc_vis.parameters(), lr=learning_rate, betas=(0.5, 0.999),)
-    opt_gen = optim.Adam(gen.parameters(), lr=learning_rate, betas=(0.5, 0.999))
-    transform = transforms.Compose([transforms.Resize((512,1024),transforms.InterpolationMode.BILINEAR), transforms.ToTensor()])
+    opt_disc_ir = optim.Adam(disc_ir.parameters(), lr=learning_rate, betas=(0.9, 0.999),)
+    opt_disc_vis = optim.Adam(disc_vis.parameters(), lr=learning_rate, betas=(0.9, 0.999),)
+    opt_gen = optim.Adam(gen.parameters(), lr=learning_rate, betas=(0.9, 0.999))
+    scheduler = CosineAnnealingLR(opt_gen,
+                              T_max = 32, # Maximum number of iterations.
+                             eta_min = 1e-4) # Minimum learning rate.
+    transform = transforms.Compose([transforms.Resize((256,512),transforms.InterpolationMode.BILINEAR), transforms.ToTensor()])
     # transform = transforms.Compose([transforms.Resize((512,512),transforms.InterpolationMode.BILINEAR)])
     # transform = transforms.Compose([transforms.ToPILImage(), transforms.Resize((512,512),transforms.InterpolationMode.BILINEAR), transforms.ToTensor()])
     BCE = nn.BCEWithLogitsLoss()
@@ -307,7 +328,8 @@ def main():
     # train_dataset = CustomDataSet(train_dir_vis, train_dir_ir, train_dir_vis_lbl, train_dir_ir_lbl, transform= transform)
     # train_loader = DataLoader(train_dataset, batch_size = batch_size, shuffle=True, num_workers=num_workers)
     # Define your dataset as before
-    dataset = CustomDataSet(train_dir_vis, train_dir_ir, train_dir_vis_lbl, train_dir_ir_lbl, transform=transform)
+    # dataset = CustomDataSet(train_dir_vis, train_dir_ir, train_dir_vis_lbl, train_dir_ir_lbl, transform=transform)
+    dataset = CustomDataSet(train_dir_vis, train_dir_ir, transform=transform)
 
     # Calculate the size of the training set and validation set
     train_size = int(len(dataset) * 0.8)  # 80% for training
@@ -334,7 +356,7 @@ def main():
     g_scaler = torch.cuda.amp.GradScaler()
     d_scaler_ir = torch.cuda.amp.GradScaler()
     d_scaler_vis = torch.cuda.amp.GradScaler()
-    test_dataset = CustomDataSet(test_dir_vis, test_dir_ir, test_dir_vis_lbl, test_dir_ir_lbl, transform)
+    test_dataset = CustomDataSet(test_dir_vis, test_dir_ir,transform)
     test_loader = DataLoader(test_dataset, batch_size = batch_size, shuffle=True)
     test_loader1 = DataLoader(test_dataset, batch_size = 1, shuffle=False)
 
@@ -364,155 +386,183 @@ def main():
             disc_ir, disc_vis, gen, train_loader, val_loader, opt_disc_ir, opt_disc_vis, opt_gen, L1_LOSS, BCE, ssim, KL, g_scaler, d_scaler_ir,d_scaler_vis
         )
         
-        tqdm.write(f"Epoch {epoch} - Gen Loss: {p:.4f} - D1 Loss: {q:.4f} - D2 Loss: {r:.4f} ")
+        tqdm.write(f"Epoch {epoch} lr {learning_rate} - Gen Loss: {p:.4f} - D1 Loss: {q:.4f} - D2 Loss: {r:.4f} ")
         # Logging loss values for training
-        wandb.log({"Generator Loss": p, "Discriminator IR Loss": r, "Discriminator VIS Loss": q})
+        wandb.log({"Generator Loss": p, "Discriminator IR Loss": r, "Discriminator VIS Loss": q, "Learning Rate" : learning_rate})
 
         if save_model and epoch % 2 == 0:
-            # save_checkpoint(gen, opt_gen, filename=checkpoint_gen)
+            save_checkpoint(gen, opt_gen, filename= f"gen_Danny_{epoch}.pth.tar")
             # save_checkpoint(disc_ir, opt_disc_ir, filename=checkpoint_disc_ir)
             # save_checkpoint(disc_vis, opt_disc_vis, filename=checkpoint_disc_vis)
-            print('plotting metrics')
-            # m1 = calculate_metrics_with_patch(gen, test_loader1, epoch, folder = "dump7", device = DEVICE)
-            df, stats = calculate_metrics(gen, test_loader1, epoch, folder = "dump11")
-            min_psnr_vis.append(stats.loc['min', 'PSNR_VIS'])
-            max_psnr_vis.append(stats.loc['max', 'PSNR_VIS'])
-            mean_psnr_vis.append(stats.loc['mean', 'PSNR_VIS'])
-            min_psnr_ir.append(stats.loc['min', 'PSNR_IR'])
-            max_psnr_ir.append(stats.loc['max', 'PSNR_IR'])
-            mean_psnr_ir.append(stats.loc['mean', 'PSNR_IR'])
+    #         print('plotting metrics')
+    #         # m1 = calculate_metrics_with_patch(gen, test_loader1, epoch, folder = "dump7", device = DEVICE)
+    #         df, stats = calculate_metrics(gen, test_loader1, epoch, folder = "dump19")
+    #         min_psnr_vis.append(stats.loc['min', 'PSNR_VIS'])
+    #         max_psnr_vis.append(stats.loc['max', 'PSNR_VIS'])
+    #         mean_psnr_vis.append(stats.loc['mean', 'PSNR_VIS'])
+    #         min_psnr_ir.append(stats.loc['min', 'PSNR_IR'])
+    #         max_psnr_ir.append(stats.loc['max', 'PSNR_IR'])
+    #         mean_psnr_ir.append(stats.loc['mean', 'PSNR_IR'])
 
-            min_ssim_vis.append(stats.loc['min', 'SSIM_VIS'])
-            max_ssim_vis.append(stats.loc['max', 'SSIM_VIS'])
-            mean_ssim_vis.append(stats.loc['mean', 'SSIM_VIS'])
-            min_ssim_ir.append(stats.loc['min', 'SSIM_IR'])
-            max_ssim_ir.append(stats.loc['max', 'SSIM_IR'])
-            mean_ssim_ir.append(stats.loc['mean', 'SSIM_IR'])
+    #         min_ssim_vis.append(stats.loc['min', 'SSIM_VIS'])
+    #         max_ssim_vis.append(stats.loc['max', 'SSIM_VIS'])
+    #         mean_ssim_vis.append(stats.loc['mean', 'SSIM_VIS'])
+    #         min_ssim_ir.append(stats.loc['min', 'SSIM_IR'])
+    #         max_ssim_ir.append(stats.loc['max', 'SSIM_IR'])
+    #         mean_ssim_ir.append(stats.loc['mean', 'SSIM_IR'])
 
-            min_nmi_vis.append(stats.loc['min', 'NMI_VIS'])
-            max_nmi_vis.append(stats.loc['max', 'NMI_VIS'])
-            mean_nmi_vis.append(stats.loc['mean', 'NMI_VIS'])
-            min_nmi_ir.append(stats.loc['min', 'NMI_IR'])
-            max_nmi_ir.append(stats.loc['max', 'NMI_IR'])
-            mean_nmi_ir.append(stats.loc['mean', 'NMI_IR'])
+    #         min_nmi_vis.append(stats.loc['min', 'NMI_VIS'])
+    #         max_nmi_vis.append(stats.loc['max', 'NMI_VIS'])
+    #         mean_nmi_vis.append(stats.loc['mean', 'NMI_VIS'])
+    #         min_nmi_ir.append(stats.loc['min', 'NMI_IR'])
+    #         max_nmi_ir.append(stats.loc['max', 'NMI_IR'])
+    #         mean_nmi_ir.append(stats.loc['mean', 'NMI_IR'])
 
             print(f"saving examples at epoch {epoch}")
-            save_some_examples(gen, test_loader, epoch, folder="dump11", device = DEVICE)  #label3 512x1024 with no clamp on masks and yolov5         
+            save_some_examples(gen, test_loader, epoch, folder="dump19", device = DEVICE)  #label3 512x1024 with no clamp on masks and yolov5         
 
 
-    # converting all data lists to np arrays to calculate mean for box plots
-    min_psnr_vis = np.array(min_psnr_vis , dtype = float)
-    max_psnr_vis = np.array(max_psnr_vis , dtype = float)
-    mean_psnr_vis = np.array( mean_psnr_vis, dtype = float)
-    min_ssim_vis = np.array(min_ssim_vis , dtype = float)
-    max_ssim_vis = np.array(max_ssim_vis , dtype = float)
-    mean_ssim_vis = np.array(mean_ssim_vis , dtype = float)
-    min_nmi_vis = np.array(min_nmi_vis , dtype = float)
-    max_nmi_vis = np.array(max_nmi_vis , dtype = float)
-    mean_nmi_vis = np.array(mean_nmi_vis , dtype = float)
+    # # converting all data lists to np arrays to calculate mean for box plots
+    # min_psnr_vis = np.array(min_psnr_vis , dtype = float)
+    # max_psnr_vis = np.array(max_psnr_vis , dtype = float)
+    # mean_psnr_vis = np.array( mean_psnr_vis, dtype = float)
+    # min_ssim_vis = np.array(min_ssim_vis , dtype = float)
+    # max_ssim_vis = np.array(max_ssim_vis , dtype = float)
+    # mean_ssim_vis = np.array(mean_ssim_vis , dtype = float)
+    # min_nmi_vis = np.array(min_nmi_vis , dtype = float)
+    # max_nmi_vis = np.array(max_nmi_vis , dtype = float)
+    # mean_nmi_vis = np.array(mean_nmi_vis , dtype = float)
 
-    min_psnr_ir = np.array(min_psnr_ir , dtype = float)
-    max_psnr_ir = np.array(max_psnr_ir , dtype = float)
-    mean_psnr_ir = np.array(mean_psnr_ir , dtype = float)
-    min_ssim_ir = np.array( min_ssim_ir, dtype = float)
-    max_ssim_ir = np.array(max_ssim_ir , dtype = float)
-    mean_ssim_ir = np.array( mean_ssim_ir , dtype = float)
-    min_nmi_ir = np.array( min_nmi_ir, dtype = float)
-    max_nmi_ir = np.array( max_nmi_ir, dtype = float)
-    mean_nmi_ir = np.array(mean_nmi_ir , dtype = float)
-    # print(type(mean_psnr_vis))
-    box_data = [min_psnr_vis, max_psnr_vis, mean_psnr_vis, min_ssim_vis, max_ssim_vis, mean_ssim_vis, min_nmi_vis, max_nmi_vis, mean_nmi_vis, min_psnr_ir, max_psnr_ir, mean_psnr_ir, min_ssim_ir, max_ssim_ir, mean_ssim_ir, min_nmi_ir, max_nmi_ir, mean_nmi_ir]
-    labels = ['PSNR_VIS', 'max PSNR_VIS', 'mean PSNR_VIS', 'SSIM_VIS', 'max SSIM_VIS', 'mean SSIM_VIS', 'NMI_VIS', 'max NMI_VIS', 'mean NMI_VIS', 'PSNR_IR', 'max PSNR_IR', 'mean PSNR_IR', 'SSIM_IR', 'max SSIM_IR', 'mean SSIM_IR', 'NMI_IR', 'max NMI_IR', 'mean NMI_IR']
-    fig, axs = plt.subplots(2, 6, figsize=(20, 10))
-    for i in range(6):
-        # fig, ax = plt.subplots(figsize=(5,5))
-        # fig, axs = plt.subplots(2, 6, figsize=(20, 10), sharey = True)
-        if i == 0:
-            axs[0, i].plot(min_psnr_vis, label='min PSNR_VIS')
-            axs[0, i].plot(max_psnr_vis, label='max PSNR_VIS')
-            axs[0, i].plot(mean_psnr_vis, label='mean PSNR_VIS')
-            axs[0, i].set_title('PSNR_VIS')
-            axs[0, i].set_xlabel('Epochs')
-            axs[0, i].set_ylabel('PSNR_VIS')
-            axs[0, i].set_ylim(40, 100)
-            # axs[0, i].set_ylim([min(min_psnr_vis + max_psnr_vis + mean_psnr_vis), max(min_psnr_vis + max_psnr_vis + mean_psnr_vis)])
-            axs[0, i].legend()
-            # axs[1,i].boxplot(box_data[i*3:(i+1)*3])
-            # axs[1,i].set_title(labels[i*3])
-            # axs[1,i].set_xticklabels(['min', 'max', 'mean'])
-            # axs[1,i].set_ylabel(labels[i*3])
-            # ax.set_ylim(0, 100)
-            
-        elif i == 1:
-            axs[0, i].plot(min_ssim_vis, label='min SSIM_VIS')
-            axs[0, i].plot(max_ssim_vis, label='max SSIM_VIS')
-            axs[0, i].plot(mean_ssim_vis, label='mean SSIM_VIS')
-            axs[0, i].set_title('SSIM_VIS')
-            axs[0, i].set_xlabel('Epochs')
-            axs[0, i].set_ylabel('SSIM_VIS')
-            axs[0, i].set_ylim(0, 1)
-            axs[0, i].legend()
-        elif i == 2:
-            axs[0, i].plot(min_nmi_vis, label='min NMI_VIS')
-            axs[0, i].plot(max_nmi_vis, label='max NMI_VIS')
-            axs[0, i].plot(mean_nmi_vis, label='mean NMI_VIS')
-            axs[0, i].set_title('NMI_VIS')
-            axs[0, i].set_xlabel('Epochs')
-            axs[0, i].set_ylabel('NMI_VIS')
-            axs[0, i].set_ylim(0.9, 1.8)
-            # axs[0, i].set_ylim([min(min_nmi_vis + max_nmi_vis + mean_nmi_vis), max(min_nmi_vis + max_nmi_vis + mean_nmi_vis)])
-            axs[0, i].legend()
-        elif i == 3:
-            axs[0, i].plot(min_psnr_ir, label='min PSNR_IR')
-            axs[0, i].plot(max_psnr_ir, label='max PSNR_IR')
-            axs[0, i].plot(mean_psnr_ir, label='mean PSNR_IR')
-            axs[0, i].set_title('PSNR_IR')
-            axs[0, i].set_xlabel('Epochs')
-            axs[0, i].set_ylabel('PSNR_IR')
-            axs[0, i].set_ylim(40, 100)
-            # axs[0, i].set_ylim([min(min_psnr_ir + max_psnr_ir + mean_psnr_ir), max(min_psnr_ir + max_psnr_ir + mean_psnr_ir)])
-            axs[0, i].legend()
-        elif i == 4:
-            axs[0, i].plot(min_ssim_ir, label='min SSIM_IR')
-            axs[0, i].plot(max_ssim_ir, label='max SSIM_IR')
-            axs[0, i].plot(mean_ssim_ir, label='mean SSIM_IR')
-            axs[0, i].set_title('SSIM_IR')
-            axs[0, i].set_xlabel('Epochs')
-            axs[0, i].set_ylabel('SSIM_IR')
-            axs[0, i].set_ylim(0, 1)
-            # axs[0, i].set_ylim([min(min_ssim_ir + max_ssim_ir + mean_ssim_ir), max(min_ssim_ir + max_ssim_ir + mean_ssim_ir)])
-            axs[0, i].legend()
-        elif i == 5:
-            axs[0, i].plot(min_nmi_ir, label='min NMI_IR')
-            axs[0, i].plot(max_nmi_ir, label='max NMI_IR')
-            axs[0, i].plot(mean_nmi_ir, label='mean NMI_IR')
-            axs[0, i].set_title('NMI_IR')
-            axs[0, i].set_xlabel('Epochs')
-            axs[0, i].set_ylabel('NMI_IR')
-            axs[0, i].set_ylim(0.9, 1.8)
-            # axs[0, i].set_ylim([min(min_nmi_ir + max_nmi_ir + mean_nmi_ir), max(min_nmi_ir + max_nmi_ir + mean_nmi_ir)])
-            axs[0, i].legend()
+    # min_psnr_ir = np.array(min_psnr_ir , dtype = float)
+    # max_psnr_ir = np.array(max_psnr_ir , dtype = float)
+    # mean_psnr_ir = np.array(mean_psnr_ir , dtype = float)
+    # min_ssim_ir = np.array( min_ssim_ir, dtype = float)
+    # max_ssim_ir = np.array(max_ssim_ir , dtype = float)
+    # mean_ssim_ir = np.array( mean_ssim_ir , dtype = float)
+    # min_nmi_ir = np.array( min_nmi_ir, dtype = float)
+    # max_nmi_ir = np.array( max_nmi_ir, dtype = float)
+    # mean_nmi_ir = np.array(mean_nmi_ir , dtype = float)
 
+    # # Create subplots
+    # fig, axs = plt.subplots(1, 2)
+
+    # # Plot for IR Images
+    # axs[0,0].plot(min_ssim_ir, label='Min SSIM')
+    # axs[0,0].plot(max_ssim_ir, label='Max SSIM')
+    # axs[0,0].plot(mean_ssim_ir, label='Mean SSIM')
+    # axs[0,0].set_ylabel('SSIM Values (IR Images)')
+    # axs[0,0].set_ylim(0, 1)
+    # axs[0,0].legend()
+
+    # # Plot for Visual Images
+    # axs[0,1].plot(min_ssim_vis, label='Min SSIM')
+    # axs[0,1].plot(max_ssim_vis, label='Max SSIM')
+    # axs[0,1].plot(mean_ssim_vis, label='Mean SSIM')
+    # axs[0,1].set_xlabel('Epochs')
+    # axs[0,1].set_ylabel('SSIM Values (Visual Images)')
+    # axs[0,1].set_ylim(0, 1)
+    # axs[0,1].legend()
+
+    # # Adjust spacing between subplots
+    # fig.tight_layout()
+    # plt.savefig('dump20_' + 'min_max_metrics_visir_subplot_ssim_box.png')
+    # plt.close()
+
+
+    # # print(type(mean_psnr_vis))
     # box_data = [min_psnr_vis, max_psnr_vis, mean_psnr_vis, min_ssim_vis, max_ssim_vis, mean_ssim_vis, min_nmi_vis, max_nmi_vis, mean_nmi_vis, min_psnr_ir, max_psnr_ir, mean_psnr_ir, min_ssim_ir, max_ssim_ir, mean_ssim_ir, min_nmi_ir, max_nmi_ir, mean_nmi_ir]
-    # labels = ['min PSNR_VIS', 'max PSNR_VIS', 'mean PSNR_VIS', 'min SSIM_VIS', 'max SSIM_VIS', 'mean SSIM_VIS', 'min NMI_VIS', 'max NMI_VIS', 'mean NMI_VIS', 'min PSNR_IR', 'max PSNR_IR', 'mean PSNR_IR', 'min SSIM_IR', 'max SSIM_IR', 'mean SSIM_IR', 'min NMI_IR', 'max NMI_IR', 'mean NMI_IR']
-    for i in range(6):
-        axs[1,i].boxplot(box_data[i*3:(i+1)*3])
-        axs[1,i].set_title(labels[i*3])
-        axs[1,i].set_xticklabels(['min', 'max', 'mean'])
-        axs[1,i].set_ylabel(labels[i*3])
-        if i ==0 or i == 3:
-            axs[1,i].set_ylim(40,100)
-        elif i ==1 or i == 4:
-            axs[1,i].set_ylim(0,1)
-        elif i == 2 or i == 5:
-            axs[1,i].set_ylim(0.9,1.8)
+    # labels = ['PSNR_VIS', 'max PSNR_VIS', 'mean PSNR_VIS', 'SSIM_VIS', 'max SSIM_VIS', 'mean SSIM_VIS', 'NMI_VIS', 'max NMI_VIS', 'mean NMI_VIS', 'PSNR_IR', 'max PSNR_IR', 'mean PSNR_IR', 'SSIM_IR', 'max SSIM_IR', 'mean SSIM_IR', 'NMI_IR', 'max NMI_IR', 'mean NMI_IR']
+    # # fig, axs = plt.subplots(1, 2, figsize=(20, 10))
+    # for i in range(2):
+    #     # fig, ax = plt.subplots(figsize=(5,5))
+    #     fig, axs = plt.subplots(1, 2, figsize=(5, 10), sharey = True)
+    #     # if i == 0:
+    #     #     axs[0, i].plot(min_psnr_vis, label='min PSNR_VIS')
+    #     #     axs[0, i].plot(max_psnr_vis, label='max PSNR_VIS')
+    #     #     axs[0, i].plot(mean_psnr_vis, label='mean PSNR_VIS')
+    #     #     axs[0, i].set_title('PSNR_VIS')
+    #     #     axs[0, i].set_xlabel('Epochs')
+    #     #     axs[0, i].set_ylabel('PSNR_VIS')
+    #     #     axs[0, i].set_ylim(40, 100)
+    #     #     # axs[0, i].set_ylim([min(min_psnr_vis + max_psnr_vis + mean_psnr_vis), max(min_psnr_vis + max_psnr_vis + mean_psnr_vis)])
+    #     #     axs[0, i].legend()
+    #         # axs[1,i].boxplot(box_data[i*3:(i+1)*3])
+    #         # axs[1,i].set_title(labels[i*3])
+    #         # axs[1,i].set_xticklabels(['min', 'max', 'mean'])
+    #         # axs[1,i].set_ylabel(labels[i*3])
+    #         # ax.set_ylim(0, 100)
+            
+    #     if i == 0:
+    #         axs[0, i].plot(min_ssim_vis, label='min SSIM_VIS')
+    #         axs[0, i].plot(max_ssim_vis, label='max SSIM_VIS')
+    #         axs[0, i].plot(mean_ssim_vis, label='mean SSIM_VIS')
+    #         axs[0, i].set_title('SSIM_VIS')
+    #         axs[0, i].set_xlabel('Epochs')
+    #         axs[0, i].set_ylabel('SSIM_VIS')
+    #         axs[0, i].set_ylim(0, 1)
+    #         axs[0, i].legend()
+    #     # elif i == 2:
+    #     #     axs[0, i].plot(min_nmi_vis, label='min NMI_VIS')
+    #     #     axs[0, i].plot(max_nmi_vis, label='max NMI_VIS')
+    #     #     axs[0, i].plot(mean_nmi_vis, label='mean NMI_VIS')
+    #     #     axs[0, i].set_title('NMI_VIS')
+    #     #     axs[0, i].set_xlabel('Epochs')
+    #     #     axs[0, i].set_ylabel('NMI_VIS')
+    #     #     axs[0, i].set_ylim(0.9, 1.8)
+    #     #     # axs[0, i].set_ylim([min(min_nmi_vis + max_nmi_vis + mean_nmi_vis), max(min_nmi_vis + max_nmi_vis + mean_nmi_vis)])
+    #     #     axs[0, i].legend()
+    #     # elif i == 3:
+    #     #     axs[0, i].plot(min_psnr_ir, label='min PSNR_IR')
+    #     #     axs[0, i].plot(max_psnr_ir, label='max PSNR_IR')
+    #     #     axs[0, i].plot(mean_psnr_ir, label='mean PSNR_IR')
+    #     #     axs[0, i].set_title('PSNR_IR')
+    #     #     axs[0, i].set_xlabel('Epochs')
+    #     #     axs[0, i].set_ylabel('PSNR_IR')
+    #     #     axs[0, i].set_ylim(40, 100)
+    #     #     # axs[0, i].set_ylim([min(min_psnr_ir + max_psnr_ir + mean_psnr_ir), max(min_psnr_ir + max_psnr_ir + mean_psnr_ir)])
+    #     #     axs[0, i].legend()
+    #     elif i == 1:
+    #         axs[0, i].plot(min_ssim_ir, label='min SSIM_IR')
+    #         axs[0, i].plot(max_ssim_ir, label='max SSIM_IR')
+    #         axs[0, i].plot(mean_ssim_ir, label='mean SSIM_IR')
+    #         axs[0, i].set_title('SSIM_IR')
+    #         axs[0, i].set_xlabel('Epochs')
+    #         axs[0, i].set_ylabel('SSIM_IR')
+    #         axs[0, i].set_ylim(0, 1)
+    #         # axs[0, i].set_ylim([min(min_ssim_ir + max_ssim_ir + mean_ssim_ir), max(min_ssim_ir + max_ssim_ir + mean_ssim_ir)])
+    #         axs[0, i].legend()
+    #     # elif i == 5:
+    #     #     axs[0, i].plot(min_nmi_ir, label='min NMI_IR')
+    #     #     axs[0, i].plot(max_nmi_ir, label='max NMI_IR')
+    #     #     axs[0, i].plot(mean_nmi_ir, label='mean NMI_IR')
+    #     #     axs[0, i].set_title('NMI_IR')
+    #     #     axs[0, i].set_xlabel('Epochs')
+    #     #     axs[0, i].set_ylabel('NMI_IR')
+    #     #     axs[0, i].set_ylim(0.9, 1.8)
+    #     #     # axs[0, i].set_ylim([min(min_nmi_ir + max_nmi_ir + mean_nmi_ir), max(min_nmi_ir + max_nmi_ir + mean_nmi_ir)])
+    #     #     axs[0, i].legend()
+    #     # adjust the layout of the subplots and save the figure
+    # fig.tight_layout()
+    # plt.savefig('dump19_' + 'min_max_metrics_visir_subplot_ssim_box.png')
+    # plt.close()
+
+    # # box_data = [min_psnr_vis, max_psnr_vis, mean_psnr_vis, min_ssim_vis, max_ssim_vis, mean_ssim_vis, min_nmi_vis, max_nmi_vis, mean_nmi_vis, min_psnr_ir, max_psnr_ir, mean_psnr_ir, min_ssim_ir, max_ssim_ir, mean_ssim_ir, min_nmi_ir, max_nmi_ir, mean_nmi_ir]
+    # # labels = ['min PSNR_VIS', 'max PSNR_VIS', 'mean PSNR_VIS', 'min SSIM_VIS', 'max SSIM_VIS', 'mean SSIM_VIS', 'min NMI_VIS', 'max NMI_VIS', 'mean NMI_VIS', 'min PSNR_IR', 'max PSNR_IR', 'mean PSNR_IR', 'min SSIM_IR', 'max SSIM_IR', 'mean SSIM_IR', 'min NMI_IR', 'max NMI_IR', 'mean NMI_IR']
+    # # for i in range(6):
+    # #     axs[1,i].boxplot(box_data[i*3:(i+1)*3])
+    # #     axs[1,i].set_title(labels[i*3])
+    # #     axs[1,i].set_xticklabels(['min', 'max', 'mean'])
+    # #     axs[1,i].set_ylabel(labels[i*3])
+    # #     if i ==0 or i == 3:
+    # #         axs[1,i].set_ylim(40,100)
+    # #     elif i ==1 or i == 4:
+    # #         axs[1,i].set_ylim(0,1)
+    # #     elif i == 2 or i == 5:
+    # #         axs[1,i].set_ylim(0.9,1.8)
 
 
 
-    # adjust the layout of the subplots and save the figure
-    fig.tight_layout()
-    plt.savefig('dump11_' + 'min_max_metrics_visir_subplot_box.png')
-    plt.close()
+    
 
 
 if __name__ == "__main__":
