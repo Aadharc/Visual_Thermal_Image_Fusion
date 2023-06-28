@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torchvision.models import VisionTransformer
+from loss import ContrastiveLoss
 
 
 class block(nn.Module):
@@ -104,6 +105,10 @@ class CrossAttention(nn.Module):
         # Convolutional layer for combining the attended features
         self.combine_conv = nn.Conv2d(in_channels * 2, in_channels, kernel_size=1)
 
+        # Contrastive Loss
+        self.loss = ContrastiveLoss(temperature = 0.2)
+        # self.loss = nn.CrossEntropyLoss()
+
     def forward(self, x1, x2):
         # Compute the query, key, and value features from x1 and x2
         batch_size, _, h, w = x1.size()
@@ -122,18 +127,22 @@ class CrossAttention(nn.Module):
 
         # Combine the attended features from x1 and x2
         combined1 = self.combine_conv(torch.cat((x1, attended1), dim=1))
+        # combined1 = attended1
+
 
         # Compute the attention map and attended features
         attn2 = torch.bmm(query1, key2)
         attn2 = F.softmax(attn2, dim=2)
-        attn2 = torch.clamp(attn2, 0, 1)
+        # attn2 = torch.clamp(attn2, 0, 1)
         attended2 = torch.bmm(value2, attn2.permute(0, 2, 1)).view(batch_size, self.in_channels, h, w)
 
         # Combine the attended features from x1 and x2
         combined2 = self.combine_conv(torch.cat((x2, attended2), dim=1))
+        # combined2 = attended2
 
         # Compute uniqueness loss using contrastive loss
-        loss = self.contrastive_loss(combined1, combined2)
+        # loss = self.contrastive_loss(combined1, combined2)
+        loss = self.loss(combined1, combined2)
 
         # Return the fused features and uniqueness loss
         # return combined1, combined2, loss
@@ -172,6 +181,7 @@ class AttentionDownSampled(nn.Module):
     def __init__(self, in_chan = 3, features = 32):
         super().__init__()
         self.down1 = block(in_chan, features // 4, down = True, act = "prelu", use_dropout= False)
+        self.down1_1 = block(1, features // 4, down = True, act = "prelu", use_dropout= False)
         self.down2 = block(features // 4, features // 2, down = True, act = "prelu", use_dropout= False)
         self.down3 = block(features // 2, features, down = True, act = "prelu", use_dropout= False)
         # self.down4 = block(features, features, down = True, act = "prelu", use_dropout= False)
@@ -180,12 +190,19 @@ class AttentionDownSampled(nn.Module):
     def forward(self, x, y):
         # print(x.shape)
         h,w = x.shape[2], x.shape[3]
-        dx1 = self.down1(x)
+        if x.shape[1] == 3:
+            dx1 = self.down1(x)
+        else:
+            dx1 = self.down1_1(x)
+        # dx1 = self.down1(x)
         dx2 = self.down2(dx1)
         dx3 = self.down3(dx2)
         # dx4 = self.down4(dx3)
-
-        dy1 = self.down1(y)
+        if y.shape[1] == 3:
+            dy1 = self.down1(y)
+        else:
+            dy1 = self.down1_1(y)
+        # dy1 = self.down1(y)
         dy2 = self.down2(dy1)
         dy3 = self.down3(dy2)
         # dy4 = self.down4(dy3)
@@ -198,8 +215,8 @@ class AttentionDownSampled(nn.Module):
         # attn1 = torch.clamp(attn1, 0, 1)
         # attn2 = torch.clamp(attn2, 0, 1)
 
-        return x * attn1, y * attn2, contrastive_loss
-        # return attn1, attn2
+        # return x * attn1, y * attn2, contrastive_loss
+        return attn1, attn2, contrastive_loss
 
 
 class Generator_attn(nn.Module):
@@ -224,7 +241,9 @@ class Generator_attn(nn.Module):
 
     def forward(self, x, y):
         # w,h = x.shape[2], x.shape[3]
-        x_a, y_a, l_a = self.attn(x,y)
+        attn1, attn2, l_a = self.attn(x,y)
+        x_a = x * attn1
+        y_a = y * attn2
         # print(f"x_a shape {x_a.shape}")
         dx1 = self.down1(x_a)
         dx2 = self.down2(dx1)
@@ -292,6 +311,10 @@ class Gen(nn.Module):
             nn.Conv2d(in_channels*2, features, 4, 2, 1, padding_mode="reflect"),
             nn.LeakyReLU(0.2),
         )
+        self.initial_down_1 = nn.Sequential(
+            nn.Conv2d(4, features, 4, 2, 1, padding_mode="reflect"),
+            nn.LeakyReLU(0.2),
+        )
         self.down1 = Block(features, features * 2, down=True, act="leaky", use_dropout=False)
         self.down2 = Block(
             features * 2, features * 4, down=True, act="leaky", use_dropout=False
@@ -335,11 +358,16 @@ class Gen(nn.Module):
         )
 
     def forward(self, x, y):
-        x_a, y_a, l_a = self.attn(x, y)
+        attn1, attn2, l_a = self.attn(x,y)
+        x_a = x * attn1
+        y_a = y * attn2               # multiplying by attention maps to original input images to get the useful features
 
         d = torch.cat([x_a,y_a], dim=1)
+        if d.shape[1]== 6 :
         # print("d shape", d.shape)
-        d1 = self.initial_down(d)
+            d1 = self.initial_down(d)
+        else:
+            d1 = self.initial_down_1(d)
         # print("d1 shape", d1.shape)
         d2 = self.down1(d1)
         # print("d2 shape", d2.shape)
@@ -363,7 +391,8 @@ class Gen(nn.Module):
         up5 = self.up5(torch.cat([up4, d4], 1))
         up6 = self.up6(torch.cat([up5, d3], 1))
         up7 = self.up7(torch.cat([up6, d2], 1))
-        return self.final_up(torch.cat([up7, d1], 1)), x_a, y_a, l_a
+        # return self.final_up(torch.cat([up7, d1], 1)), x_a, y_a, l_a
+        return self.final_up(torch.cat([up7, d1], 1)), attn1, attn2, l_a
 
 
 
