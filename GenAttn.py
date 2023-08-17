@@ -362,6 +362,9 @@ class Gen(nn.Module):
         x_a = x * attn1
         y_a = y * attn2               # multiplying by attention maps to original input images to get the useful features
 
+        # x_a = x 
+        # y_a = y                       # Not multiplying by attention maps to original input images to get the useful features for ablation study
+
         d = torch.cat([x_a,y_a], dim=1)
         if d.shape[1]== 6 :
         # print("d shape", d.shape)

@@ -67,7 +67,7 @@ parser.add_argument("--l1_lambda", type=float, default=100,
 parser.add_argument("--alpha", type=float, default=5,
                     help="Weight for the adversarial loss for the generator (default: 5)")
 parser.add_argument("--beta", type=float, default=10,
-                    help="Weight for the identity loss for the generator (default: 10)")
+                    help="Weight for the KL loss for the generator (default: 10)")
 parser.add_argument("--num_epochs", type=int, default=12,
                     help="Number of epochs for training (default: 12)")
 parser.add_argument("--load_model", action="store_true", default = False,
@@ -78,8 +78,8 @@ parser.add_argument("--checkpoint_disc_ir", type=str, default="disc_ir_maskbwsel
                     help="Checkpoint file for the discriminator for infrared modality (default: disc_ir_maskbwself.pth.tar)")
 parser.add_argument("--checkpoint_disc_vis", type=str, default="disc_vis_maskbwself.pth.tar",
                     help="Checkpoint file for the discriminator for visual modality (default: disc_vis_maskbwself.pth.tar)")
-parser.add_argument("--checkpoint_gen", type=str, default="gen_Danny.pth.tar",
-                    help="Checkpoint file for the generator (default: gen_Danny.pth.tar)")
+parser.add_argument("--checkpoint_gen", type=str, default="gen_no_attn.pth.tar",
+                    help="Checkpoint file for the generator (default: gen_no_attn.pth.tar)")
 
 args = parser.parse_args()
 
@@ -329,7 +329,7 @@ def main():
     # train_loader = DataLoader(train_dataset, batch_size = batch_size, shuffle=True, num_workers=num_workers)
     # Define your dataset as before
     # dataset = CustomDataSet(train_dir_vis, train_dir_ir, train_dir_vis_lbl, train_dir_ir_lbl, transform=transform)
-    dataset = CustomDataSet(train_dir_vis, train_dir_ir, transform=transform)
+    dataset = CustomDataSet(train_dir_vis, train_dir_ir, transform=transform) #used Dataset2.py for evaluation plots
 
     # Calculate the size of the training set and validation set
     train_size = int(len(dataset) * 0.8)  # 80% for training
@@ -356,7 +356,8 @@ def main():
     g_scaler = torch.cuda.amp.GradScaler()
     d_scaler_ir = torch.cuda.amp.GradScaler()
     d_scaler_vis = torch.cuda.amp.GradScaler()
-    test_dataset = CustomDataSet(test_dir_vis, test_dir_ir,transform)
+    # test_dataset = CustomDataSet(test_dir_vis, test_dir_ir, test_dir_vis_lbl, test_dir_ir_lbl, transform)
+    test_dataset = CustomDataSet(test_dir_vis, test_dir_ir, transform)
     test_loader = DataLoader(test_dataset, batch_size = batch_size, shuffle=True)
     test_loader1 = DataLoader(test_dataset, batch_size = 1, shuffle=False)
 
@@ -391,7 +392,7 @@ def main():
         wandb.log({"Generator Loss": p, "Discriminator IR Loss": r, "Discriminator VIS Loss": q, "Learning Rate" : learning_rate})
 
         if save_model and epoch % 2 == 0:
-            save_checkpoint(gen, opt_gen, filename= f"gen_Danny_{epoch}.pth.tar")
+            save_checkpoint(gen, opt_gen, filename= f"gen_No_KL.pth.tar")
             # save_checkpoint(disc_ir, opt_disc_ir, filename=checkpoint_disc_ir)
             # save_checkpoint(disc_vis, opt_disc_vis, filename=checkpoint_disc_vis)
     #         print('plotting metrics')
@@ -419,7 +420,7 @@ def main():
     #         mean_nmi_ir.append(stats.loc['mean', 'NMI_IR'])
 
             print(f"saving examples at epoch {epoch}")
-            save_some_examples(gen, test_loader, epoch, folder="dump19", device = DEVICE)  #label3 512x1024 with no clamp on masks and yolov5         
+            save_some_examples(gen, test_loader, epoch, folder="dump20", device = DEVICE)  #label3 512x1024 with no clamp on masks and yolov5         
 
 
     # # converting all data lists to np arrays to calculate mean for box plots
