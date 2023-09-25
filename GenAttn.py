@@ -39,60 +39,13 @@ class convblock(nn.Module):
         return x
     
 
-
-# class CrossAttention(nn.Module):
-#     def __init__(self, in_channels):
-#         super(CrossAttention, self).__init__()
-#         self.in_channels = in_channels
-
-#         # self.modality_id_ir = modality_id_ir
-#         # self.modality_id_vis = modality_id_vis
-
-#         # Convolutional layers for extracting query, key, and value features
-#         self.query_conv = nn.Conv2d(in_channels, in_channels // 8, kernel_size=1)
-#         self.key_conv = nn.Conv2d(in_channels, in_channels // 8, kernel_size=1)
-#         self.value_conv = nn.Conv2d(in_channels, in_channels, kernel_size=1)
-
-#         # Convolutional layer for combining the attended features
-#         self.combine_conv = nn.Conv2d(in_channels*2, in_channels, kernel_size=1)
-
-#     def forward(self, x1, x2):
-#         # Compute the query, key, and value features from x1 and x2
-#         batch_size, _, h, w = x1.size()
-#         query1 = self.query_conv(x1).view(batch_size, -1, h*w).permute(0, 2, 1)
-#         # print(f"query1 shape {query1.shape}")
-#         # query1 = query1 + self.modality_id_vis
-#         key1 = self.key_conv(x1).view(batch_size, -1, h*w)
-#         value1 = self.value_conv(x1).view(batch_size, -1, h*w)
-#         query2 = self.query_conv(x2).view(batch_size, -1, h*w).permute(0, 2, 1)
-#         # query2 = query2 + self.modality_id_ir
-#         key2 = self.key_conv(x2).view(batch_size, -1, h*w)
-#         value2 = self.value_conv(x2).view(batch_size, -1, h*w)
-
-#         # Compute the attention map and attended features
-#         attn1 = torch.bmm(query2, key1)
-#         attn1 = F.softmax(attn1, dim=2)
-#         attn1 = torch.clamp(attn1, 0, 1)
-#         attended1 = torch.bmm(value1, attn1.permute(0, 2, 1)).view(batch_size, self.in_channels, h, w)
-
-#         # Combine the attended features from x1 and x2
-#         combined1 = self.combine_conv(torch.cat((x1, attended1), dim=1))
-
-#         # Compute the attention map and attended features
-#         attn2 = torch.bmm(query1, key2)
-#         attn2 = F.softmax(attn2, dim=2)
-#         attn2 = torch.clamp(attn2, 0, 1)
-#         attended2 = torch.bmm(value2, attn2.permute(0, 2, 1)).view(batch_size, self.in_channels, h, w)
-
-#         # Combine the attended features from x1 and x2
-#         combined2 = self.combine_conv(torch.cat((x2, attended2), dim=1))
-
-#         # return torch.cat((torch.abs(combined1).sum(dim=1).unsqueeze(1), torch.abs(combined2).sum(dim = 1).unsqueeze(1)), dim = 1)
-#         return (combined1.pow(2).mean(1).unsqueeze(1), combined2.pow(2).mean(1).unsqueeze(1))
-
-
-
 class CrossAttention(nn.Module):
+    '''
+    Class for  calculating cross attention between two images.
+
+    Args:
+    in_channels : number of channels in input images.
+    '''
     def __init__(self, in_channels):
         super(CrossAttention, self).__init__()
         self.in_channels = in_channels

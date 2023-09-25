@@ -3,6 +3,19 @@ import torch.nn as nn
 from GenAttn import CrossAttention, AttentionDownSampled
 
 class CNNBlock(nn.Module):
+    '''
+    CNN block for Discriminator
+
+    This class defines a convolutional neural network (CNN) block designed for use in a Discriminator model. 
+    The block consists of a series of operations that process input data through convolutional layers, batch 
+    normalization, and a LeakyReLU activation function. It is commonly used to create the foundational layers 
+    of a Discriminator network in applications like image synthesis and GANs (Generative Adversarial Networks).
+
+    Args:
+        in_channels (int): Number of input channels to the convolutional layer.
+        out_channels (int): Number of output channels from the convolutional layer.
+        stride (int): Stride value for the convolution operation.
+    '''
     def __init__(self, in_channels, out_channels, stride):
         super(CNNBlock, self).__init__()
         self.conv = nn.Sequential(

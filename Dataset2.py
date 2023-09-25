@@ -10,6 +10,14 @@ import numpy as np
 
 
 class CustomDataSet(Dataset):
+    '''
+    Custom Dataset class to load the dataset containing time synchronous misaligned visual and thermal images
+
+    main_dir_vis : directory for visual images
+    main_dir_ir : directory for thermal images
+    transform : torchvision transformer for preprocessing
+
+    '''
     def __init__(self, main_dir_vis, main_dir_ir, transform):
         self.main_dir_vis = main_dir_vis
         self.main_dir_ir = main_dir_ir

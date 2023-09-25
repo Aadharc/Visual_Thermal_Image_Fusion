@@ -98,6 +98,9 @@ class CustomDataSet(Dataset):
         return ({'image_vis' : tensor_image_vis, 'image_ir' : tensor_image_ir, 'target_vis' :(torch.tensor(visual_bboxes, dtype = torch.float32)).shape[0], 'target_ir' : (torch.tensor(thermal_bboxes, dtype=torch.float32)).shape[0]})
 
 
+
+
+# testing the dataset class functionality
 if __name__ == "__main__":
     transform = transforms.Compose([transforms.Resize((256,512),transforms.InterpolationMode.BILINEAR), transforms.ToTensor()])
     # transform = transforms.Compose([transforms.Resize((512,512),transforms.InterpolationMode.BILINEAR)])

@@ -5,6 +5,8 @@ import matplotlib.pyplot as plt
 from skimage.transform import resize
 import torch
 import torch.nn.functional as F
+import torch.nn as nn
+import torchvision.transforms as transforms
 
 
 def _ssim(image1, image2, window_size=11, sigma=1.5):
@@ -73,10 +75,6 @@ def calculate_ssim(image1, image2, patch_size=64, metric = 'ssim'):
 
     return metric_value
 
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import torchvision.transforms as transforms
 
 class ContrastiveLoss(nn.Module):
     def __init__(self, temperature):
@@ -109,26 +107,6 @@ class ContrastiveLoss(nn.Module):
 
         return contrastive_loss
 
-## Example usage
-# embedding_dim = 128
-# temperature = 0.5
-# loss_fn = ContrastiveLoss(temperature)
-
-# # Generate dummy inputs
-# batch_size = 16
-# transform = transforms.Compose([
-#     transforms.ToTensor(),
-#     # Add appropriate data augmentations here
-# ])
-# x1 = torch.randn(batch_size, 3, 224, 224)  # Visual image
-# x2 = torch.randn(batch_size, 3, 224, 224)  # Another visual image
-
-# # Preprocess and encode the images
-# z1 = encoder(x1)  # Encode visual image
-# z2 = encoder(x2)  # Encode another visual image
-
-# # Compute the contrastive loss
-# contrastive_loss = loss_fn(z1, z2)
 
 
 def test():
